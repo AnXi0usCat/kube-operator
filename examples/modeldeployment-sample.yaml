@@ -1,0 +1,17 @@
+apiVersion: ml.jedimindtricks.example/v1alpha1
+kind: ModelDeployment
+metadata:
+  name: sentiment-analyzer
+spec:
+  live:
+    image: localhost:5000/model-server:1.0
+    replicas: 2
+  shadow:
+    image: registry.localhost:5000/model-server:shadow
+    replicas: 1
+  trafficMirror: true
+  rolloutStrategy: rolling
+  probes:
+    livenessPath: /health
+    readinessPath: /ready
+  configRef: sentiment-config
