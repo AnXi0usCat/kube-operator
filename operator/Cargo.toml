@@ -1,0 +1,21 @@
+[package]
+name = "operator"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
+
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+schemars = "0.8"
+
+kube = { version = "1.1.0", features = ["runtime", "derive"] } # Library for talking to Kubernetes API
+kube-derive = "1.1.0" # Support for Custom Resource Definitions
+kube-runtime = "1.1.0" # Custom controller support
+k8s-openapi = { version = "0.25.0", features = ["v1_31"] } # Kube-rs depends on k8s-openapi
+
+# For metrics later (observability chapter)
+prometheus = "0.13"

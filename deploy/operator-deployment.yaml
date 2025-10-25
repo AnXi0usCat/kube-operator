@@ -1,0 +1,20 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: model-operator
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: model-operator }
+  template:
+    metadata:
+      labels: { app: model-operator }
+    spec:
+      serviceAccountName: model-operator
+      containers:
+        - name: operator
+          image: k3d-registry.localhost:5000/model-operator:dev
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: RUST_LOG
+              value: info
