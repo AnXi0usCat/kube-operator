@@ -26,22 +26,22 @@ spec:
                 properties:
                   enabled:
                     type: boolean
-                  max_replicas:
+                  maxReplicas:
                     format: int32
                     nullable: true
                     type: integer
-                  min_replicas:
+                  minReplicas:
                     format: int32
                     nullable: true
                     type: integer
-                  target_cpu_utilization_percentage:
+                  targetCpuUtilizationPercentage:
                     format: int32
                     nullable: true
                     type: integer
                 required:
                 - enabled
                 type: object
-              config_ref:
+              configRef:
                 nullable: true
                 type: string
               live:
@@ -58,10 +58,10 @@ spec:
               probes:
                 nullable: true
                 properties:
-                  liveness_path:
+                  livenessPath:
                     default: /health
                     type: string
-                  readiness_path:
+                  readinessPath:
                     default: /ready
                     type: string
                 type: object
@@ -89,7 +89,7 @@ spec:
                         type: string
                     type: object
                 type: object
-              rollout_strategy:
+              rolloutStrategy:
                 default: rolling
                 type: string
               shadow:
@@ -104,7 +104,7 @@ spec:
                 required:
                 - image
                 type: object
-              traffic_mirror:
+              trafficMirror:
                 default: false
                 type: boolean
             required:
@@ -132,14 +132,14 @@ spec:
                   type: object
                 nullable: true
                 type: array
-              live_status:
+              liveStatus:
                 nullable: true
                 properties:
-                  available_replicas:
+                  availableReplicas:
                     format: int32
                     nullable: true
                     type: integer
-                  updated_replicas:
+                  updatedReplicas:
                     format: int32
                     nullable: true
                     type: integer
@@ -147,14 +147,14 @@ spec:
               phase:
                 nullable: true
                 type: string
-              shadow_status:
+              shadowStatus:
                 nullable: true
                 properties:
-                  available_replicas:
+                  availableReplicas:
                     format: int32
                     nullable: true
                     type: integer
-                  updated_replicas:
+                  updatedReplicas:
                     format: int32
                     nullable: true
                     type: integer
