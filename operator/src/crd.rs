@@ -3,6 +3,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 #[derive(CustomResource, Serialize, Deserialize, Debug, Clone, JsonSchema, Default)]
+#[serde(rename_all = "camelCase")]
 #[kube(
     group = "ml.jedimindtricks.example",
     version = "v1alpha1",
@@ -36,6 +37,7 @@ pub struct ModelDeploymentSpec {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, JsonSchema, Default)]
+#[serde(rename_all = "camelCase")]
 pub struct ModelVariant {
     pub image: String,
     #[serde(default = "default_replicas")]
@@ -43,18 +45,21 @@ pub struct ModelVariant {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, JsonSchema, Default)]
+#[serde(rename_all = "camelCase")]
 pub struct ResourceSpec {
     pub limits: Option<ResourceLimits>,
     pub requests: Option<ResourceLimits>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, JsonSchema, Default)]
+#[serde(rename_all = "camelCase")]
 pub struct ResourceLimits {
     pub cpu: Option<String>,
     pub memory: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, JsonSchema, Default)]
+#[serde(rename_all = "camelCase")]
 pub struct AutoScalingSpec {
     pub enabled: bool,
     pub min_replicas: Option<i32>,
@@ -63,6 +68,7 @@ pub struct AutoScalingSpec {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, JsonSchema, Default)]
+#[serde(rename_all = "camelCase")]
 pub struct ProbeSpec {
     #[serde(default = "default_liveness")]
     pub liveness_path: String,
@@ -71,6 +77,7 @@ pub struct ProbeSpec {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, JsonSchema, Default)]
+#[serde(rename_all = "camelCase")]
 pub struct ModelDeploymentStatus {
     pub phase: Option<String>,
     pub live_status: Option<ChildStatus>,
@@ -79,12 +86,14 @@ pub struct ModelDeploymentStatus {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, JsonSchema, Default)]
+#[serde(rename_all = "camelCase")]
 pub struct ChildStatus {
     pub available_replicas: Option<i32>,
     pub updated_replicas: Option<i32>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, JsonSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct Condition {
     pub r#type: String,
     pub status: String,
