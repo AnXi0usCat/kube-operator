@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, sync::Arc, time::Duration};
+use std::{collections::BTreeMap, fmt::format, sync::Arc, time::Duration};
 
 use crate::crd::ModelDeployment;
 use k8s_openapi::{
@@ -6,7 +6,7 @@ use k8s_openapi::{
         apps::v1::{Deployment, DeploymentSpec, DeploymentStrategy, RollingUpdateDeployment},
         core::v1::{
             Container, ContainerPort, PodSpec, PodTemplateSpec, Service, ServicePort, ServiceSpec,
-        },
+        }, networking::v1::{HTTPIngressPath, HTTPIngressRuleValue, Ingress, IngressBackend, IngressRule, IngressServiceBackend, IngressSpec, ServiceBackendPort},
     },
     apimachinery::pkg::{apis::meta::v1::LabelSelector, util::intstr::IntOrString},
 };
@@ -114,5 +114,51 @@ async fn ensure_deployment(
 
     api.create(&PostParams::default(), &deploy).await?;
     println!("created Deployment: {}", name);
+    Ok(())
+}
+
+async fn ensure_ingress(api: &Api<Ingress>, name: &str, svc_name: &str) -> Result<(), Error> {
+    if api.get_opt(name).await?.is_some() {
+        return Ok(());
+    }
+
+    let backend = IngressBackend {
+        service: Some(IngressServiceBackend {
+            name: svc_name.into(),
+            port: Some(ServiceBackendPort {
+                number: Some(8000), name: None
+            })
+        }),
+        resource: None
+    };
+
+    let rule = IngressRule {
+        host: Some(format!("{}.local", name)),
+        http: Some(HTTPIngressRuleValue {
+            paths: vec![HTTPIngressPath {
+                path: Some("/".into()),
+                path_type: "Prefix".to_string(),
+                backend: backend.clone(),
+            }],
+        }),
+    };
+
+    let ing = Ingress {
+        metadata: kube::core::ObjectMeta {
+            name: Some(name.to_string()),
+            annotations: Some(std::collections::BTreeMap::from([
+                ("nginx.ingress.kubernetes.io/mirror-target".into(), format!("{svc_name}-shadow")),
+            ])),
+            ..Default::default()
+        },
+        spec: Some(IngressSpec {
+            rules: Some(vec![rule]),
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+
+    api.create(&PostParams::default(), &ing).await?;
+    println!("created Ingress {}", name);
     Ok(())
 }
