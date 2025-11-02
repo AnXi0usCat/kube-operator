@@ -12,13 +12,16 @@ use k8s_openapi::{
             IngressServiceBackend, IngressSpec, ServiceBackendPort,
         },
     },
-    apimachinery::pkg::{apis::meta::v1::LabelSelector, util::intstr::IntOrString},
+    apimachinery::pkg::{
+        apis::meta::v1::{LabelSelector, OwnerReference},
+        util::intstr::IntOrString,
+    },
 };
-use kube::Error as KubeError;
 use kube::{
     Api, Client,
     api::{ObjectMeta, PostParams},
 };
+use kube::{Error as KubeError, Resource};
 use kube_runtime::controller::Action;
 use thiserror::Error;
 
@@ -26,6 +29,10 @@ use thiserror::Error;
 pub enum Error {
     #[error("Kubernetes API error: {0}")]
     Kube(#[from] KubeError),
+}
+
+fn owner_ref(md: &ModelDeployment) -> OwnerReference {
+    md.controller_owner_ref(&()).unwrap()
 }
 
 pub async fn reconsile(md: Arc<ModelDeployment>, _ctx: Arc<Client>) -> Result<Action, Error> {
@@ -36,7 +43,12 @@ pub fn error_policy(_object: Arc<ModelDeployment>, _error: &Error, _ctx: Arc<Cli
     Action::requeue(Duration::from_secs(10))
 }
 
-async fn ensure_service(api: &Api<Service>, svc_name: &str, app_name: &str) -> Result<(), Error> {
+async fn ensure_service(
+    api: &Api<Service>,
+    md: &ModelDeployment,
+    svc_name: &str,
+    app_name: &str,
+) -> Result<(), Error> {
     if api.get_opt(svc_name).await?.is_some() {
         return Ok(());
     }
@@ -45,6 +57,7 @@ async fn ensure_service(api: &Api<Service>, svc_name: &str, app_name: &str) -> R
         metadata: ObjectMeta {
             name: Some(svc_name.to_string()),
             labels: Some(BTreeMap::from([("app".into(), app_name.into())])),
+            owner_references: Some(vec![owner_ref(md)]),
             ..Default::default()
         },
         spec: Some(ServiceSpec {
@@ -66,6 +79,7 @@ async fn ensure_service(api: &Api<Service>, svc_name: &str, app_name: &str) -> R
 
 async fn ensure_deployment(
     api: &Api<Deployment>,
+    md: &ModelDeployment,
     name: &str,
     image: &str,
     replicas: i32,
@@ -89,6 +103,7 @@ async fn ensure_deployment(
         metadata: ObjectMeta {
             name: Some(name.into()),
             labels: Some(labels.clone()),
+            owner_references: Some(vec![owner_ref(md)]),
             ..Default::default()
         },
         spec: Some(DeploymentSpec {
