@@ -6,7 +6,11 @@ use k8s_openapi::{
         apps::v1::{Deployment, DeploymentSpec, DeploymentStrategy, RollingUpdateDeployment},
         core::v1::{
             Container, ContainerPort, PodSpec, PodTemplateSpec, Service, ServicePort, ServiceSpec,
-        }, networking::v1::{HTTPIngressPath, HTTPIngressRuleValue, Ingress, IngressBackend, IngressRule, IngressServiceBackend, IngressSpec, ServiceBackendPort},
+        },
+        networking::v1::{
+            HTTPIngressPath, HTTPIngressRuleValue, Ingress, IngressBackend, IngressRule,
+            IngressServiceBackend, IngressSpec, ServiceBackendPort,
+        },
     },
     apimachinery::pkg::{apis::meta::v1::LabelSelector, util::intstr::IntOrString},
 };
@@ -126,10 +130,11 @@ async fn ensure_ingress(api: &Api<Ingress>, name: &str, svc_name: &str) -> Resul
         service: Some(IngressServiceBackend {
             name: svc_name.into(),
             port: Some(ServiceBackendPort {
-                number: Some(8000), name: None
-            })
+                number: Some(8000),
+                name: None,
+            }),
         }),
-        resource: None
+        resource: None,
     };
 
     let rule = IngressRule {
@@ -146,9 +151,10 @@ async fn ensure_ingress(api: &Api<Ingress>, name: &str, svc_name: &str) -> Resul
     let ing = Ingress {
         metadata: kube::core::ObjectMeta {
             name: Some(name.to_string()),
-            annotations: Some(std::collections::BTreeMap::from([
-                ("nginx.ingress.kubernetes.io/mirror-target".into(), format!("{svc_name}-shadow")),
-            ])),
+            annotations: Some(std::collections::BTreeMap::from([(
+                "nginx.ingress.kubernetes.io/mirror-target".into(),
+                format!("{svc_name}-shadow"),
+            )])),
             ..Default::default()
         },
         spec: Some(IngressSpec {
