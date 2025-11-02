@@ -6,7 +6,7 @@ use std::sync::Arc;
 use crd::ModelDeployment;
 use futures::stream::StreamExt;
 use kube::{Api, Client};
-use kube_runtime::{watcher, Controller};
+use kube_runtime::{Controller, watcher};
 use reconsile::{error_policy, reconsile};
 use tracing_subscriber::{EnvFilter, fmt};
 
