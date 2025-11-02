@@ -18,8 +18,9 @@ use k8s_openapi::{
     },
 };
 use kube::{
-    Api, Client,
+    Api, Client, ResourceExt,
     api::{ObjectMeta, PostParams},
+    core::object::HasSpec,
 };
 use kube::{Error as KubeError, Resource};
 use kube_runtime::controller::Action;
@@ -35,8 +36,46 @@ fn owner_ref(md: &ModelDeployment) -> OwnerReference {
     md.controller_owner_ref(&()).unwrap()
 }
 
-pub async fn reconsile(md: Arc<ModelDeployment>, _ctx: Arc<Client>) -> Result<Action, Error> {
-    Ok(Action::requeue(Duration::from_secs(300)))
+pub async fn reconsile(md: Arc<ModelDeployment>, ctx: Arc<Client>) -> Result<Action, Error> {
+    let ns = md.namespace().unwrap_or_else(|| "default".into());
+    let name = md.name_any();
+    let spec = md.spec();
+
+    println!("Reconciling ModelDeployment {}/{}", ns, name);
+
+    let svc_api: Api<Service> = Api::namespaced(ctx.as_ref().clone(), &ns);
+    let svc_name = format!("{}-svc", name);
+    ensure_service(&svc_api, &md, &svc_name, &name).await?;
+
+    let deployment_api: Api<Deployment> = Api::namespaced(ctx.as_ref().clone(), &ns);
+    let live_name = format!("{}-live", name);
+    ensure_deployment(
+        &deployment_api,
+        &md,
+        &live_name,
+        &spec.live.image,
+        spec.live.replicas,
+    )
+    .await?;
+
+    if let Some(shadow) = &spec.shadow {
+        let shadow_name = format!("{}-shadow", name);
+        ensure_deployment(
+            &deployment_api,
+            &md,
+            &shadow_name,
+            &shadow.image,
+            shadow.replicas,
+        )
+        .await?;
+    }
+
+    if spec.traffic_mirror {
+        let ingress_api: Api<Ingress> = Api::namespaced(ctx.as_ref().clone(), &ns);
+        ensure_ingress(&ingress_api, &md, &name, &svc_name).await?;
+    }
+
+    Ok(Action::requeue(Duration::from_secs(60)))
 }
 
 pub fn error_policy(_object: Arc<ModelDeployment>, _error: &Error, _ctx: Arc<Client>) -> Action {
@@ -136,7 +175,12 @@ async fn ensure_deployment(
     Ok(())
 }
 
-async fn ensure_ingress(api: &Api<Ingress>, name: &str, svc_name: &str) -> Result<(), Error> {
+async fn ensure_ingress(
+    api: &Api<Ingress>,
+    md: &ModelDeployment,
+    name: &str,
+    svc_name: &str,
+) -> Result<(), Error> {
     if api.get_opt(name).await?.is_some() {
         return Ok(());
     }
