@@ -36,14 +36,14 @@ pub enum Error {
 #[derive(Debug, PartialEq)]
 enum DeploymentType {
     Live,
-    Shadow
+    Shadow,
 }
 
 impl Display for DeploymentType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             DeploymentType::Live => write!(f, "live"),
-            DeploymentType::Shadow => write!(f, "shadow")
+            DeploymentType::Shadow => write!(f, "shadow"),
         }
     }
 }
