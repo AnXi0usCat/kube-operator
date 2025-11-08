@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, fmt::format, sync::Arc, time::Duration};
+use std::{collections::BTreeMap, sync::Arc, time::Duration};
 
 use crate::crd::ModelDeployment;
 use k8s_openapi::{
@@ -19,11 +19,12 @@ use k8s_openapi::{
 };
 use kube::{
     Api, Client, ResourceExt,
-    api::{ObjectMeta, PostParams},
+    api::{ObjectMeta, Patch, PatchParams, PostParams},
     core::object::HasSpec,
 };
 use kube::{Error as KubeError, Resource};
 use kube_runtime::controller::Action;
+use serde_json::json;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -225,5 +226,28 @@ async fn ensure_ingress(
 
     api.create(&PostParams::default(), &ing).await?;
     println!("created Ingress {}", name);
+    Ok(())
+}
+
+async fn update_status(
+    api: &Api<ModelDeployment>,
+    md: &ModelDeployment,
+    live_ready: i32,
+    shadow_ready: i32,
+) -> Result<(), Error> {
+    let status = json!({
+        "status": {
+            "phase": "Available",
+            "liveStatus": { "availableReplicas": live_ready },
+            "shadow_status": {"availableReplicas": shadow_ready }
+        }
+    });
+    api.patch_status(
+        &md.name_any(),
+        &PatchParams::apply("nodel-operator"),
+        &Patch::Merge(&status),
+    )
+    .await?;
+
     Ok(())
 }
