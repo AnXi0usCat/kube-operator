@@ -10,7 +10,4 @@ COPY operator/Cargo.toml /src/operator/Cargo.toml
 COPY operator /src/operator
 RUN cargo build --release -p operator
 
-# Runtime stage
-FROM gcr.io/distroless/cc-debian12
-COPY --from=builder /src/target/release/operator /usr/local/bin/operator
-ENTRYPOINT ["/usr/local/bin/operator"]
+ENTRYPOINT ["/src/target/release/operator"]
