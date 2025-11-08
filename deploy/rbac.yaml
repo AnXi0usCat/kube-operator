@@ -18,7 +18,10 @@ rules:
   - apiGroups: ["apiextensions.k8s.io"]
     resources: ["customresourcedefinitions"]
     verbs: ["get", "list", "watch"]
-  - apiGroups: ["ml.yourorg.example"]  # will match our CRD group later
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingresses"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["ml.jedimindtricks.example"]
     resources: ["modeldeployments", "modeldeployments/status", "modeldeployments/finalizers"]
     verbs: ["*"]
 ---
