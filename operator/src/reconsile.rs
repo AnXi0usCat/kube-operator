@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, sync::Arc, time::Duration};
+use std::{collections::BTreeMap, fmt::Display, sync::Arc, time::Duration};
 
 use crate::crd::ModelDeployment;
 use k8s_openapi::{
@@ -31,6 +31,21 @@ use thiserror::Error;
 pub enum Error {
     #[error("Kubernetes API error: {0}")]
     Kube(#[from] KubeError),
+}
+
+#[derive(Debug, PartialEq)]
+enum DeploymentType {
+    Live,
+    Shadow
+}
+
+impl Display for DeploymentType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DeploymentType::Live => write!(f, "live"),
+            DeploymentType::Shadow => write!(f, "shadow")
+        }
+    }
 }
 
 fn owner_ref(md: &ModelDeployment) -> OwnerReference {
