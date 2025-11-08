@@ -48,47 +48,61 @@ impl Display for DeploymentType {
     }
 }
 
+impl AsRef<str> for DeploymentType {
+    fn as_ref(&self) -> &str {
+        match self {
+            DeploymentType::Live => "live",
+            DeploymentType::Shadow => "Shadow",
+        }
+    }
+}
+
 fn owner_ref(md: &ModelDeployment) -> OwnerReference {
     md.controller_owner_ref(&()).unwrap()
 }
 
 pub async fn reconsile(md: Arc<ModelDeployment>, ctx: Arc<Client>) -> Result<Action, Error> {
     let ns = md.namespace().unwrap_or_else(|| "default".into());
-    let name = md.name_any();
+    let base_name = md.name_any();
     let spec = md.spec();
 
-    println!("Reconciling ModelDeployment {}/{}", ns, name);
+    println!("Reconciling ModelDeployment {}/{}", ns, base_name);
 
     let svc_api: Api<Service> = Api::namespaced(ctx.as_ref().clone(), &ns);
-    let svc_name = format!("{}-svc", name);
-    ensure_service(&svc_api, &md, &svc_name, &name).await?;
+    ensure_service(&svc_api, &md, &base_name, DeploymentType::Live).await?;
+
+    if spec.shadow.is_some() {
+        ensure_service(&svc_api, &md, &base_name, DeploymentType::Shadow).await?;
+    }
 
     let deployment_api: Api<Deployment> = Api::namespaced(ctx.as_ref().clone(), &ns);
-    let live_name = format!("{}-live", name);
     ensure_deployment(
         &deployment_api,
         &md,
-        &live_name,
+        &format!("{}-live", base_name),
+        &base_name,
         &spec.live.image,
         spec.live.replicas,
+        DeploymentType::Live,
     )
     .await?;
 
     if let Some(shadow) = &spec.shadow {
-        let shadow_name = format!("{}-shadow", name);
         ensure_deployment(
             &deployment_api,
             &md,
-            &shadow_name,
+            &format!("{}-shadow", base_name),
+            &base_name,
             &shadow.image,
             shadow.replicas,
+            DeploymentType::Shadow,
         )
         .await?;
     }
 
     if spec.traffic_mirror {
         let ingress_api: Api<Ingress> = Api::namespaced(ctx.as_ref().clone(), &ns);
-        ensure_ingress(&ingress_api, &md, &name, &svc_name).await?;
+        ensure_ingress(&ingress_api, &md, &base_name, &"live-svc").await?;
     }
 
     Ok(Action::requeue(Duration::from_secs(60)))
@@ -101,22 +115,28 @@ pub fn error_policy(_object: Arc<ModelDeployment>, _error: &Error, _ctx: Arc<Cli
 async fn ensure_service(
     api: &Api<Service>,
     md: &ModelDeployment,
-    svc_name: &str,
-    app_name: &str,
+    base_name: &str,
+    role: DeploymentType,
 ) -> Result<(), Error> {
-    if api.get_opt(svc_name).await?.is_some() {
+    let svc_name = format!("{}-{}-svc", base_name, role);
+
+    if api.get_opt(&svc_name).await?.is_some() {
         return Ok(());
     }
 
-    let service = Service {
+    let mut labels = BTreeMap::new();
+    labels.insert("app".into(), base_name.to_string());
+    labels.insert("role".into(), role.to_string());
+
+    let svc = Service {
         metadata: ObjectMeta {
-            name: Some(svc_name.to_string()),
-            labels: Some(BTreeMap::from([("app".into(), app_name.into())])),
+            name: Some(svc_name.clone()),
+            labels: Some(labels.clone()),
             owner_references: Some(vec![owner_ref(md)]),
             ..Default::default()
         },
         spec: Some(ServiceSpec {
-            selector: Some(BTreeMap::from([("app".into(), app_name.into())])),
+            selector: Some(labels),
             ports: Some(vec![ServicePort {
                 port: 8000,
                 target_port: Some(IntOrString::Int(8000)),
@@ -127,7 +147,7 @@ async fn ensure_service(
         ..Default::default()
     };
 
-    api.create(&PostParams::default(), &service).await?;
+    api.create(&PostParams::default(), &svc).await?;
     println!("Created service {}", svc_name);
     Ok(())
 }
@@ -135,17 +155,22 @@ async fn ensure_service(
 async fn ensure_deployment(
     api: &Api<Deployment>,
     md: &ModelDeployment,
-    name: &str,
+    deployment_name: &str,
+    base_name: &str,
     image: &str,
     replicas: i32,
+    role: DeploymentType,
 ) -> Result<(), Error> {
-    if api.get_opt(name).await?.is_some() {
+    if api.get_opt(deployment_name).await?.is_some() {
         return Ok(());
     }
 
-    let labels = BTreeMap::from([("app".into(), name.into())]);
+    let mut labels = BTreeMap::new();
+    labels.insert("app".into(), base_name.to_string());
+    labels.insert("role".into(), role.to_string());
+
     let container = Container {
-        name: name.into(),
+        name: deployment_name.into(),
         image: Some(image.into()),
         ports: Some(vec![ContainerPort {
             container_port: 8000,
@@ -156,7 +181,7 @@ async fn ensure_deployment(
 
     let deploy = Deployment {
         metadata: ObjectMeta {
-            name: Some(name.into()),
+            name: Some(deployment_name.into()),
             labels: Some(labels.clone()),
             owner_references: Some(vec![owner_ref(md)]),
             ..Default::default()
@@ -187,7 +212,7 @@ async fn ensure_deployment(
     };
 
     api.create(&PostParams::default(), &deploy).await?;
-    println!("created Deployment: {}", name);
+    println!("created Deployment: {}", deployment_name);
     Ok(())
 }
 
