@@ -13,7 +13,7 @@ spec:
       serviceAccountName: model-operator
       containers:
         - name: operator
-          image: k3d-registry.localhost:5000/model-operator:123
+          image: k3d-registry.localhost:5000/model-operator:latest
           imagePullPolicy: IfNotPresent
           env:
             - name: RUST_LOG

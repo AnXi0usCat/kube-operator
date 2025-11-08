@@ -4,10 +4,10 @@ metadata:
   name: sentiment-analyzer
 spec:
   live:
-    image: localhost:5000/model-server:1.0
+    image: k3d-registry.localhost:5000/model-server:latest
     replicas: 2
   shadow:
-    image: localhost:5000/model-server:shadow
+    image: k3d-registry.localhost:5000/model-server:latest
     replicas: 1
   trafficMirror: true
   rolloutStrategy: rolling

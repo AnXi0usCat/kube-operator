@@ -20,10 +20,10 @@ build-operator:
     cd operator && cargo build --release
 
 image-operator:
-    docker build -t localhost:5050/model-operator:dev -f operator/Dockerfile .
+    docker build -t localhost:5050/model-operator:latest -f operator/Dockerfile .
 
 push-operator:
-    docker push localhost:5050/model-operator:dev
+    docker push localhost:5050/model-operator:latest
 
 deploy-rbac:
     kubectl apply -f deploy/rbac.yaml
@@ -37,8 +37,8 @@ logs-operator:
 
 # ---- model server (sample) ----
 image-model:
-    docker build -t localhost:5050/model-server:dev model-server
-    docker push localhost:5050/model-server:dev
+    docker build -t localhost:5050/model-server:latest model-server
+    docker push localhost:5050/model-server:latest
 
 # ---- quick checks ----
 cluster-info:
