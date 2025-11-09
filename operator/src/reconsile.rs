@@ -102,9 +102,8 @@ pub async fn reconsile(md: Arc<ModelDeployment>, ctx: Arc<Client>) -> Result<Act
 
     if spec.traffic_mirror {
         let ingress_api: Api<Ingress> = Api::namespaced(ctx.as_ref().clone(), &ns);
-        ensure_ingress(&ingress_api, &md, &base_name, &"live-svc").await?;
+        ensure_ingress(&ingress_api, &md, &base_name).await?;
     }
-
     Ok(Action::requeue(Duration::from_secs(60)))
 }
 
@@ -219,16 +218,18 @@ async fn ensure_deployment(
 async fn ensure_ingress(
     api: &Api<Ingress>,
     md: &ModelDeployment,
-    name: &str,
-    svc_name: &str,
+    base_name: &str,
 ) -> Result<(), Error> {
-    if api.get_opt(name).await?.is_some() {
+    let ing_name = base_name.to_string();
+
+    if api.get_opt(&ing_name).await?.is_some() {
         return Ok(());
     }
 
-    let backend = IngressBackend {
+    let live_svc_name = format!("{}-live-svc", base_name);
+    let live_backend = IngressBackend {
         service: Some(IngressServiceBackend {
-            name: svc_name.into(),
+            name: live_svc_name.into(),
             port: Some(ServiceBackendPort {
                 number: Some(8000),
                 name: None,
@@ -238,23 +239,28 @@ async fn ensure_ingress(
     };
 
     let rule = IngressRule {
-        host: Some(format!("{}.local", name)),
+        host: Some(format!("{}.local", base_name)),
         http: Some(HTTPIngressRuleValue {
             paths: vec![HTTPIngressPath {
                 path: Some("/".into()),
                 path_type: "Prefix".to_string(),
-                backend: backend.clone(),
+                backend: live_backend.clone(),
             }],
         }),
     };
 
+    let shadow_svc_name = format!("{}-shadow-svc", base_name);
+    let mut annotations = std::collections::BTreeMap::new();
+    annotations.insert(
+        "nginx.ingress.kubernetes.io/mirror-target".into(),
+        shadow_svc_name,
+    );
+
     let ing = Ingress {
         metadata: kube::core::ObjectMeta {
-            name: Some(name.to_string()),
-            annotations: Some(std::collections::BTreeMap::from([(
-                "nginx.ingress.kubernetes.io/mirror-target".into(),
-                format!("{svc_name}-shadow"),
-            )])),
+            name: Some(ing_name.to_string()),
+            annotations: Some(annotations),
+            owner_references: Some(vec![owner_ref(md)]),
             ..Default::default()
         },
         spec: Some(IngressSpec {
@@ -265,7 +271,7 @@ async fn ensure_ingress(
     };
 
     api.create(&PostParams::default(), &ing).await?;
-    println!("created Ingress {}", name);
+    println!("created Ingress {}", base_name);
     Ok(())
 }
 

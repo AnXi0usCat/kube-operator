@@ -9,7 +9,7 @@ spec:
   shadow:
     image: k3d-registry.localhost:5000/model-server:latest
     replicas: 1
-  trafficMirror: false
+  trafficMirror: true
   rolloutStrategy: rolling
   probes:
     livenessPath: /health
