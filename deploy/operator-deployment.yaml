@@ -14,7 +14,7 @@ spec:
       containers:
         - name: operator
           image: k3d-registry.localhost:5000/model-operator:latest
-          imagePullPolicy: IfNotPresent
+          imagePullPolicy: Always
           env:
             - name: RUST_LOG
               value: info
