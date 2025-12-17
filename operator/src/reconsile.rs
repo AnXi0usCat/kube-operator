@@ -7,10 +7,6 @@ use k8s_openapi::{
         core::v1::{
             Container, ContainerPort, PodSpec, PodTemplateSpec, Service, ServicePort, ServiceSpec,
         },
-        networking::v1::{
-            HTTPIngressPath, HTTPIngressRuleValue, Ingress, IngressBackend, IngressRule,
-            IngressServiceBackend, IngressSpec, ServiceBackendPort,
-        },
     },
     apimachinery::pkg::{
         apis::meta::v1::{LabelSelector, OwnerReference},
@@ -18,8 +14,8 @@ use k8s_openapi::{
     },
 };
 use kube::{
-    Api, Client, ResourceExt,
-    api::{ObjectMeta, Patch, PatchParams, PostParams},
+    Api, Client,
+    api::{ApiResource, DynamicObject, ObjectMeta, Patch, PatchParams, PostParams, ResourceExt},
     core::object::HasSpec,
 };
 use kube::{Error as KubeError, Resource};
@@ -101,8 +97,11 @@ pub async fn reconsile(md: Arc<ModelDeployment>, ctx: Arc<Client>) -> Result<Act
     }
 
     if spec.traffic_mirror {
-        let ingress_api: Api<Ingress> = Api::namespaced(ctx.as_ref().clone(), &ns);
-        ensure_ingress(&ingress_api, &md, &base_name).await?;
+        let ts_api = traefik_service_api(ctx.as_ref().clone(), &ns);
+        ensure_traefik_service(&ts_api, &md, &base_name).await?;
+
+        let ir_api = ingress_route_api(ctx.as_ref().clone(), &ns);
+        ensure_ingress_route(&ir_api, &md, &base_name).await?;
     }
     Ok(Action::requeue(Duration::from_secs(60)))
 }
@@ -215,64 +214,127 @@ async fn ensure_deployment(
     Ok(())
 }
 
-async fn ensure_ingress(
-    api: &Api<Ingress>,
+async fn ensure_traefik_service(
+    api: &Api<DynamicObject>,
     md: &ModelDeployment,
     base_name: &str,
 ) -> Result<(), Error> {
-    let ing_name = base_name.to_string();
+    let ts_name = base_name.to_string();
 
-    if api.get_opt(&ing_name).await?.is_some() {
+    if api.get_opt(&ts_name).await?.is_some() {
         return Ok(());
     }
 
     let live_svc_name = format!("{}-live-svc", base_name);
-    let live_backend = IngressBackend {
-        service: Some(IngressServiceBackend {
-            name: live_svc_name.into(),
-            port: Some(ServiceBackendPort {
-                number: Some(8000),
-                name: None,
-            }),
-        }),
-        resource: None,
-    };
-
-    let rule = IngressRule {
-        host: Some(format!("{}.local", base_name)),
-        http: Some(HTTPIngressRuleValue {
-            paths: vec![HTTPIngressPath {
-                path: Some("/".into()),
-                path_type: "Prefix".to_string(),
-                backend: live_backend.clone(),
-            }],
-        }),
-    };
-
     let shadow_svc_name = format!("{}-shadow-svc", base_name);
-    let mut annotations = std::collections::BTreeMap::new();
-    annotations.insert(
-        "nginx.ingress.kubernetes.io/mirror-target".into(),
-        shadow_svc_name,
-    );
 
-    let ing = Ingress {
-        metadata: kube::core::ObjectMeta {
-            name: Some(ing_name.to_string()),
-            annotations: Some(annotations),
-            owner_references: Some(vec![owner_ref(md)]),
-            ..Default::default()
+    let md_owner = owner_ref(md);
+
+    let data = json!({
+        "apiVersion": "traefik.containo.us/v1alpha1",
+        "kind": "TraefikService",
+        "metadata": {
+            "name": ts_name,
+            "ownerReferences": [md_owner],
         },
-        spec: Some(IngressSpec {
-            rules: Some(vec![rule]),
-            ..Default::default()
-        }),
-        ..Default::default()
+        "spec": {
+            "mirroring": {
+                "name": live_svc_name,
+                "kind": "Service",
+                "port": 8000,
+                "mirrors": [
+                    {
+                        "name": shadow_svc_name,
+                        "kind": "Service",
+                        "port": 8000,
+                        "percent": 100
+                    }
+                ]
+            }
+        }
+    });
+
+    // DynamicObject::new sets kind/apiVersion from ApiResource, but we already
+    // included those in `data` for clarity. kube will merge them.
+    let obj = DynamicObject {
+        types: None,
+        metadata: ObjectMeta::default(), // will be filled from `data`
+        data,
     };
 
-    api.create(&PostParams::default(), &ing).await?;
-    println!("created Ingress {}", base_name);
+    api.create(&PostParams::default(), &obj).await?;
+    println!("created TraefikService {}", ts_name);
     Ok(())
+}
+
+async fn ensure_ingress_route(
+    api: &Api<DynamicObject>,
+    md: &ModelDeployment,
+    base_name: &str,
+) -> Result<(), Error> {
+    let ir_name = base_name.to_string();
+
+    if api.get_opt(&ir_name).await?.is_some() {
+        return Ok(());
+    }
+
+    let md_owner = owner_ref(md);
+
+    let host_rule = format!("Host(`{}.{}`)", base_name, "local");
+
+    let data = json!({
+        "apiVersion": "traefik.containo.us/v1alpha1",
+        "kind": "IngressRoute",
+        "metadata": {
+            "name": ir_name,
+            "ownerReferences": [md_owner],
+        },
+        "spec": {
+            "entryPoints": ["web"],
+            "routes": [
+                {
+                    "match": host_rule,
+                    "kind": "Rule",
+                    "services": [
+                        {
+                            "name": base_name,
+                            "kind": "TraefikService",
+                        }
+                    ]
+                }
+            ]
+        }
+    });
+
+    let obj = DynamicObject {
+        types: None,
+        metadata: ObjectMeta::default(),
+        data,
+    };
+
+    api.create(&PostParams::default(), &obj).await?;
+    println!("created IngressRoute {}", ir_name);
+    Ok(())
+}
+
+fn traefik_service_api(client: Client, ns: &str) -> Api<DynamicObject> {
+    let ar = ApiResource::from_gvk_with_plural(
+        &kube::core::gvk::GroupVersionKind::gvk(
+            "traefik.containo.us",
+            "v1alpha1",
+            "TraefikService",
+        ),
+        "traefikservices",
+    );
+    Api::namespaced_with(client, ns, &ar)
+}
+
+fn ingress_route_api(client: Client, ns: &str) -> Api<DynamicObject> {
+    let ar = ApiResource::from_gvk_with_plural(
+        &kube::core::gvk::GroupVersionKind::gvk("traefik.containo.us", "v1alpha1", "IngressRoute"),
+        "ingressroutes",
+    );
+    Api::namespaced_with(client, ns, &ar)
 }
 
 async fn update_status(
