@@ -14,7 +14,7 @@ use k8s_openapi::{
     apimachinery::pkg::{
         apis::meta::v1::{LabelSelector, OwnerReference},
         util::intstr::IntOrString,
-    },
+    }, chrono,
 };
 use kube::{
     Api, Client,
@@ -493,7 +493,7 @@ async fn emit_event(
     client: &Client,
     md: &ModelDeployment,
     ns: &str,
-    event_type: &str, // "Normal" or "Warning"
+    event_type: &str,
     reason: &str,
     message: &str,
 ) -> Result<(), Error> {
@@ -503,23 +503,24 @@ async fn emit_event(
 
     let event = Event {
         metadata: ObjectMeta {
-            name: Some(name),
+            name: Some(name.clone()),
             namespace: Some(ns.to_string()),
-            ..Default::default()
-        },
-        involved_object: k8s_openapi::api::core::v1::ObjectReference {
-            kind: Some("ModelDeployment".into()),
-            name: Some(md.name_any()),
-            namespace: Some(ns.to_string()),
-            api_version: Some("ml.jediminstricks.example/v1alpha1".into()),
             ..Default::default()
         },
         type_: Some(event_type.into()),
         reason: Some(reason.into()),
         message: Some(message.into()),
+        involved_object: md.object_ref(&()),
+        first_timestamp: Some(k8s_openapi::apimachinery::pkg::apis::meta::v1::Time(chrono::Utc::now())),
+        last_timestamp: Some(k8s_openapi::apimachinery::pkg::apis::meta::v1::Time(chrono::Utc::now())),
         ..Default::default()
     };
 
-    events.create(&PostParams::default(), &event).await?;
+    events.patch(
+        &name,
+        &PatchParams::apply("model-operator").force(),
+        &Patch::Apply(&event),
+        ).await?;
+
     Ok(())
 }
