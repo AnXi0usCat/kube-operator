@@ -1,11 +1,14 @@
 use std::{collections::BTreeMap, fmt::Display, sync::Arc, time::Duration};
 
-use crate::crd::ModelDeployment;
+use crate::crd::{
+    ChildStatus, Condition, ModelDeployment, ModelDeploymentSpec, ModelDeploymentStatus,
+};
 use k8s_openapi::{
     api::{
         apps::v1::{Deployment, DeploymentSpec, DeploymentStrategy, RollingUpdateDeployment},
         core::v1::{
-            Container, ContainerPort, PodSpec, PodTemplateSpec, Service, ServicePort, ServiceSpec,
+            Container, ContainerPort, Event, PodSpec, PodTemplateSpec, Service, ServicePort,
+            ServiceSpec,
         },
     },
     apimachinery::pkg::{
@@ -103,6 +106,12 @@ pub async fn reconsile(md: Arc<ModelDeployment>, ctx: Arc<Client>) -> Result<Act
         let ir_api = ingress_route_api(ctx.as_ref().clone(), &ns);
         ensure_ingress_route(&ir_api, &md, &base_name).await?;
     }
+
+    let (live_status, shadow_status) = get_child_status(&ctx, &base_name, &ns).await?;
+    let model_deployment_status =
+        compute_model_deployment_status(spec, &live_status, &shadow_status).await;
+    update_status(&ctx, &md, &ns, &model_deployment_status).await?;
+
     Ok(Action::requeue(Duration::from_secs(60)))
 }
 
@@ -338,24 +347,169 @@ fn ingress_route_api(client: Client, ns: &str) -> Api<DynamicObject> {
 }
 
 async fn update_status(
-    api: &Api<ModelDeployment>,
+    client: &Client,
     md: &ModelDeployment,
-    live_ready: i32,
-    shadow_ready: i32,
+    ns: &str,
+    status: &ModelDeploymentStatus,
 ) -> Result<(), Error> {
-    let status = json!({
-        "status": {
-            "phase": "Available",
-            "liveStatus": { "availableReplicas": live_ready },
-            "shadow_status": {"availableReplicas": shadow_ready }
-        }
+    let api: Api<ModelDeployment> = Api::namespaced(client.clone(), ns);
+
+    let patch = json!({
+        "status": status
     });
+
     api.patch_status(
         &md.name_any(),
-        &PatchParams::apply("nodel-operator"),
-        &Patch::Merge(&status),
+        &PatchParams::default(),
+        &Patch::Merge(&patch),
     )
     .await?;
 
+    Ok(())
+}
+
+async fn get_child_status(
+    client: &Client,
+    base_name: &str,
+    ns: &str,
+) -> Result<(Option<ChildStatus>, Option<ChildStatus>), Error> {
+    let deploy_api: Api<Deployment> = Api::namespaced(client.clone(), ns);
+
+    let live_name = format!("{}-live", base_name);
+    let shadow_name = format!("{}-shadow", base_name);
+
+    fn convert_to_child_status(deployment: &Deployment) -> ChildStatus {
+        let status = deployment.status.as_ref();
+
+        ChildStatus {
+            available_replicas: status.and_then(|st| st.available_replicas),
+            updated_replicas: status.and_then(|st| st.updated_replicas),
+        }
+    }
+
+    let live_status = match deploy_api.get_opt(&live_name).await? {
+        Some(dep) => Some(convert_to_child_status(&dep)),
+        None => None,
+    };
+
+    let shadow_status = match deploy_api.get_opt(&shadow_name).await? {
+        Some(dep) => Some(convert_to_child_status(&dep)),
+        None => None,
+    };
+
+    Ok((live_status, shadow_status))
+}
+
+async fn compute_model_deployment_status(
+    spec: &ModelDeploymentSpec,
+    live: &Option<ChildStatus>,
+    shadow: &Option<ChildStatus>,
+) -> ModelDeploymentStatus {
+    // helper
+    fn availabld_replicas(cs: &Option<ChildStatus>) -> i32 {
+        cs.as_ref().and_then(|s| s.available_replicas).unwrap_or(0)
+    }
+
+    let live_available = availabld_replicas(live);
+    let live_desired = spec.live.replicas;
+
+    let shadow_available = availabld_replicas(shadow);
+    let shadow_desired = spec.shadow.as_ref().map(|r| r.replicas).unwrap_or(0);
+
+    // calculate Phase of deployment
+    let phase = if live_available == live_desired
+        && (spec.shadow.is_none() || shadow_available == shadow_desired)
+    {
+        Some("Available".into())
+    } else if live_available == 0 && live_desired > 0 {
+        Some("Degraded".into())
+    } else {
+        Some("Progressing".into())
+    };
+
+    // create Conditions
+    let mut conditions = Vec::with_capacity(3);
+
+    let ready = live_available == live_desired
+        && (spec.shadow.is_none() || shadow_available == shadow_desired);
+
+    conditions.push(Condition {
+        r#type: "Ready".into(),
+        status: if ready { "True".into() } else { "False".into() },
+        reason: Some(if ready {
+            "AllReplicasAvailable".into()
+        } else {
+            "ReplicasNotReady".into()
+        }),
+        message: Some(format!(
+            "live {}/{} shadow {}/{} available",
+            live_available, live_desired, shadow_available, shadow_desired
+        )),
+    });
+
+    let progressing = !ready;
+    conditions.push(Condition {
+        r#type: "Progressing".into(),
+        status: if progressing {
+            "True".into()
+        } else {
+            "False".into()
+        },
+        reason: Some("Reconciling".into()),
+        message: Some("Deployment is rolling out or scaling.".into()),
+    });
+
+    let degraded = live_available == 0 && live_desired > 0;
+    conditions.push(Condition {
+        r#type: "Degraded".into(),
+        status: if degraded {
+            "True".into()
+        } else {
+            "False".into()
+        },
+        reason: Some("NoAvailableReplicas".into()),
+        message: Some("No live replicas are currently available.".into()),
+    });
+
+    ModelDeploymentStatus {
+        phase,
+        live_status: live.clone(),
+        shadow_status: shadow.clone(),
+        conditions: Some(conditions),
+    }
+}
+
+async fn emit_event(
+    client: &Client,
+    md: &ModelDeployment,
+    ns: &str,
+    event_type: &str, // "Normal" or "Warning"
+    reason: &str,
+    message: &str,
+) -> Result<(), Error> {
+    let events: Api<Event> = Api::namespaced(client.clone(), ns);
+
+    let name = format!("{}-{}", md.name_any(), reason.to_lowercase());
+
+    let event = Event {
+        metadata: ObjectMeta {
+            name: Some(name),
+            namespace: Some(ns.to_string()),
+            ..Default::default()
+        },
+        involved_object: k8s_openapi::api::core::v1::ObjectReference {
+            kind: Some("ModelDeployment".into()),
+            name: Some(md.name_any()),
+            namespace: Some(ns.to_string()),
+            api_version: Some("ml.jediminstricks.example/v1alpha1".into()),
+            ..Default::default()
+        },
+        type_: Some(event_type.into()),
+        reason: Some(reason.into()),
+        message: Some(message.into()),
+        ..Default::default()
+    };
+
+    events.create(&PostParams::default(), &event).await?;
     Ok(())
 }
