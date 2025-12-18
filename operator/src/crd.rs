@@ -11,7 +11,8 @@ use serde::{Deserialize, Serialize};
     plural = "modeldeployments",
     derive = "Default",
     status = "ModelDeploymentStatus",
-    shortname = "md"
+    shortname = "md",
+    namespaced
 )]
 pub struct ModelDeploymentSpec {
     pub live: ModelVariant,
