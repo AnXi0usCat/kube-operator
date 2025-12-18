@@ -11,7 +11,7 @@ spec:
     shortNames:
     - md
     singular: modeldeployment
-  scope: Cluster
+  scope: Namespaced
   versions:
   - additionalPrinterColumns: []
     name: v1alpha1
