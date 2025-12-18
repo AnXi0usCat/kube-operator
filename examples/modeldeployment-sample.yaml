@@ -1,7 +1,8 @@
 apiVersion: ml.jedimindtricks.example/v1alpha1
 kind: ModelDeployment
 metadata:
-  name: sentiment-analyzer
+ namespace: default 
+ name: sentiment-analyzer
 spec:
   live:
     image: k3d-registry.localhost:5000/model-server:latest
