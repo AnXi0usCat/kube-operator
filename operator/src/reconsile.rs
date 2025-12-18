@@ -112,6 +112,16 @@ pub async fn reconsile(md: Arc<ModelDeployment>, ctx: Arc<Client>) -> Result<Act
         compute_model_deployment_status(spec, &live_status, &shadow_status).await;
     update_status(&ctx, &md, &ns, &model_deployment_status).await?;
 
+    emit_event(
+        &ctx,
+        &md,
+        &ns,
+        "Normal",
+        "Reconciled",
+        "ModelDeployment reconciled successfully.",
+    )
+    .await?;
+
     Ok(Action::requeue(Duration::from_secs(60)))
 }
 
