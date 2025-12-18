@@ -14,7 +14,8 @@ use k8s_openapi::{
     apimachinery::pkg::{
         apis::meta::v1::{LabelSelector, OwnerReference},
         util::intstr::IntOrString,
-    }, chrono,
+    },
+    chrono,
 };
 use kube::{
     Api, Client,
@@ -511,16 +512,22 @@ async fn emit_event(
         reason: Some(reason.into()),
         message: Some(message.into()),
         involved_object: md.object_ref(&()),
-        first_timestamp: Some(k8s_openapi::apimachinery::pkg::apis::meta::v1::Time(chrono::Utc::now())),
-        last_timestamp: Some(k8s_openapi::apimachinery::pkg::apis::meta::v1::Time(chrono::Utc::now())),
+        first_timestamp: Some(k8s_openapi::apimachinery::pkg::apis::meta::v1::Time(
+            chrono::Utc::now(),
+        )),
+        last_timestamp: Some(k8s_openapi::apimachinery::pkg::apis::meta::v1::Time(
+            chrono::Utc::now(),
+        )),
         ..Default::default()
     };
 
-    events.patch(
-        &name,
-        &PatchParams::apply("model-operator").force(),
-        &Patch::Apply(&event),
-        ).await?;
+    events
+        .patch(
+            &name,
+            &PatchParams::apply("model-operator").force(),
+            &Patch::Apply(&event),
+        )
+        .await?;
 
     Ok(())
 }
