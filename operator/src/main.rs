@@ -1,9 +1,12 @@
 mod crd;
+mod error;
+mod event;
 mod reconsile;
 
 use std::sync::Arc;
 
 use crd::ModelDeployment;
+use event::{Ctx, make_reporter};
 use futures::stream::StreamExt;
 use kube::{Api, Client};
 use kube_runtime::{Controller, watcher};
@@ -17,8 +20,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let client = Client::try_default().await?;
     let api = Api::<ModelDeployment>::all(client.clone());
 
+    let reporter = make_reporter();
+    let recorder = kube_runtime::events::Recorder::new(client.clone(), reporter);
+    let ctx = Arc::new(Ctx { client, recorder });
+
     Controller::new(api, watcher::Config::default())
-        .run(reconsile, error_policy, Arc::new(client))
+        .run(reconsile, error_policy, ctx)
         .for_each(|res| async move {
             match res {
                 Ok(obj) => println!("Reconciled {:?}", obj),

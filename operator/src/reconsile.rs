@@ -1,37 +1,30 @@
 use std::{collections::BTreeMap, fmt::Display, sync::Arc, time::Duration};
 
-use crate::crd::{
-    ChildStatus, Condition, ModelDeployment, ModelDeploymentSpec, ModelDeploymentStatus,
+use crate::{
+    crd::{ChildStatus, Condition, ModelDeployment, ModelDeploymentSpec, ModelDeploymentStatus},
+    error::Error,
+    event::{Ctx, emit_event, with_event},
 };
 use k8s_openapi::{
     api::{
         apps::v1::{Deployment, DeploymentSpec, DeploymentStrategy, RollingUpdateDeployment},
         core::v1::{
-            Container, ContainerPort, Event, PodSpec, PodTemplateSpec, Service, ServicePort,
-            ServiceSpec,
+            Container, ContainerPort, PodSpec, PodTemplateSpec, Service, ServicePort, ServiceSpec,
         },
     },
     apimachinery::pkg::{
         apis::meta::v1::{LabelSelector, OwnerReference},
         util::intstr::IntOrString,
     },
-    chrono,
 };
+use kube::Resource;
 use kube::{
     Api, Client,
     api::{ApiResource, DynamicObject, ObjectMeta, Patch, PatchParams, PostParams, ResourceExt},
     core::object::HasSpec,
 };
-use kube::{Error as KubeError, Resource};
-use kube_runtime::controller::Action;
+use kube_runtime::{controller::Action, events::EventType};
 use serde_json::json;
-use thiserror::Error;
-
-#[derive(Debug, Error)]
-pub enum Error {
-    #[error("Kubernetes API error: {0}")]
-    Kube(#[from] KubeError),
-}
 
 #[derive(Debug, PartialEq)]
 enum DeploymentType {
@@ -61,72 +54,110 @@ fn owner_ref(md: &ModelDeployment) -> OwnerReference {
     md.controller_owner_ref(&()).unwrap()
 }
 
-pub async fn reconsile(md: Arc<ModelDeployment>, ctx: Arc<Client>) -> Result<Action, Error> {
+pub async fn reconsile(md: Arc<ModelDeployment>, ctx: Arc<Ctx>) -> Result<Action, Error> {
     let ns = md.namespace().unwrap_or_else(|| "default".into());
     let base_name = md.name_any();
     let spec = md.spec();
 
     println!("Reconciling ModelDeployment {}/{}", ns, base_name);
 
-    let svc_api: Api<Service> = Api::namespaced(ctx.as_ref().clone(), &ns);
-    ensure_service(&svc_api, &md, &base_name, DeploymentType::Live).await?;
+    let svc_api: Api<Service> = Api::namespaced(ctx.client.clone(), &ns);
+    with_event(
+        &ctx,
+        &*md,
+        "Created live Service",
+        "LiveSvcFailed",
+        ensure_service(&svc_api, &md, &base_name, DeploymentType::Live),
+    )
+    .await?;
 
     if spec.shadow.is_some() {
-        ensure_service(&svc_api, &md, &base_name, DeploymentType::Shadow).await?;
+        with_event(
+            &ctx,
+            &*md,
+            "Created shadow Service",
+            "ShadowSvcFailed",
+            ensure_service(&svc_api, &md, &base_name, DeploymentType::Shadow),
+        )
+        .await?;
     }
 
-    let deployment_api: Api<Deployment> = Api::namespaced(ctx.as_ref().clone(), &ns);
-    ensure_deployment(
-        &deployment_api,
-        &md,
-        &format!("{}-live", base_name),
-        &base_name,
-        &spec.live.image,
-        spec.live.replicas,
-        DeploymentType::Live,
+    let deployment_api: Api<Deployment> = Api::namespaced(ctx.client.clone(), &ns);
+    with_event(
+        &ctx,
+        &*md,
+        "Created live Deployment",
+        "LiveDeploymentFailed",
+        ensure_deployment(
+            &deployment_api,
+            &md,
+            &format!("{}-live", base_name),
+            &base_name,
+            &spec.live.image,
+            spec.live.replicas,
+            DeploymentType::Live,
+        ),
     )
     .await?;
 
     if let Some(shadow) = &spec.shadow {
-        ensure_deployment(
-            &deployment_api,
-            &md,
-            &format!("{}-shadow", base_name),
-            &base_name,
-            &shadow.image,
-            shadow.replicas,
-            DeploymentType::Shadow,
+        with_event(
+            &ctx,
+            &*md,
+            "Created shadow Deployment",
+            "ShadowDeploymentFailed",
+            ensure_deployment(
+                &deployment_api,
+                &md,
+                &format!("{}-shadow", base_name),
+                &base_name,
+                &shadow.image,
+                shadow.replicas,
+                DeploymentType::Shadow,
+            ),
         )
         .await?;
     }
 
     if spec.traffic_mirror {
-        let ts_api = traefik_service_api(ctx.as_ref().clone(), &ns);
-        ensure_traefik_service(&ts_api, &md, &base_name).await?;
+        let ts_api = traefik_service_api(ctx.client.clone(), &ns);
+        with_event(
+            &ctx,
+            &*md,
+            "Created Traefik Service",
+            "TraefikServiceFailed",
+            ensure_traefik_service(&ts_api, &md, &base_name),
+        )
+        .await?;
 
-        let ir_api = ingress_route_api(ctx.as_ref().clone(), &ns);
-        ensure_ingress_route(&ir_api, &md, &base_name).await?;
+        let ir_api = ingress_route_api(ctx.client.clone(), &ns);
+        with_event(
+            &ctx,
+            &*md,
+            "Created Ingress Route",
+            "IngressRouteFailed",
+            ensure_ingress_route(&ir_api, &md, &base_name),
+        )
+        .await?;
     }
 
-    let (live_status, shadow_status) = get_child_status(&ctx, &base_name, &ns).await?;
+    let (live_status, shadow_status) = get_child_status(&ctx.client, &base_name, &ns).await?;
     let model_deployment_status =
         compute_model_deployment_status(spec, &live_status, &shadow_status).await;
-    update_status(&ctx, &md, &ns, &model_deployment_status).await?;
-
+    update_status(&ctx.client, &md, &ns, &model_deployment_status).await?;
     emit_event(
         &ctx,
-        &md,
-        &ns,
-        "Normal",
+        &*md,
         "Reconciled",
-        "ModelDeployment reconciled successfully.",
+        "Reconciliation completed",
+        EventType::Normal,
     )
     .await?;
 
     Ok(Action::requeue(Duration::from_secs(60)))
 }
 
-pub fn error_policy(_object: Arc<ModelDeployment>, _error: &Error, _ctx: Arc<Client>) -> Action {
+pub fn error_policy(_object: Arc<ModelDeployment>, _error: &Error, _ctx: Arc<Ctx>) -> Action {
     Action::requeue(Duration::from_secs(10))
 }
 
@@ -488,46 +519,4 @@ async fn compute_model_deployment_status(
         shadow_status: shadow.clone(),
         conditions: Some(conditions),
     }
-}
-
-async fn emit_event(
-    client: &Client,
-    md: &ModelDeployment,
-    ns: &str,
-    event_type: &str,
-    reason: &str,
-    message: &str,
-) -> Result<(), Error> {
-    let events: Api<Event> = Api::namespaced(client.clone(), ns);
-
-    let name = format!("{}-{}", md.name_any(), reason.to_lowercase());
-
-    let event = Event {
-        metadata: ObjectMeta {
-            name: Some(name.clone()),
-            namespace: Some(ns.to_string()),
-            ..Default::default()
-        },
-        type_: Some(event_type.into()),
-        reason: Some(reason.into()),
-        message: Some(message.into()),
-        involved_object: md.object_ref(&()),
-        first_timestamp: Some(k8s_openapi::apimachinery::pkg::apis::meta::v1::Time(
-            chrono::Utc::now(),
-        )),
-        last_timestamp: Some(k8s_openapi::apimachinery::pkg::apis::meta::v1::Time(
-            chrono::Utc::now(),
-        )),
-        ..Default::default()
-    };
-
-    events
-        .patch(
-            &name,
-            &PatchParams::apply("model-operator").force(),
-            &Patch::Apply(&event),
-        )
-        .await?;
-
-    Ok(())
 }
