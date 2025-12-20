@@ -1,6 +1,7 @@
 mod crd;
 mod error;
 mod event;
+mod finalizer;
 mod reconsile;
 
 use std::sync::Arc;
