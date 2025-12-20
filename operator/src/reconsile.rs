@@ -3,7 +3,7 @@ use std::{collections::BTreeMap, fmt::Display, sync::Arc, time::Duration};
 use crate::{
     crd::{ChildStatus, Condition, ModelDeployment, ModelDeploymentSpec, ModelDeploymentStatus},
     error::Error,
-    event::{Ctx, emit_event, with_event},
+    event::{Ctx, Outcome, emit_event, with_event},
     finalizer::{
         FINALIZER, ensure_finalizer_present, has_finalizer, is_deleting, remove_finalizer,
     },
@@ -63,6 +63,7 @@ pub async fn reconsile(md: Arc<ModelDeployment>, ctx: Arc<Ctx>) -> Result<Action
     let spec = md.spec();
 
     println!("Reconciling ModelDeployment {}/{}", ns, base_name);
+    let mut changed = false;
 
     if is_deleting(&md) {
         if has_finalizer(&md, FINALIZER) {
@@ -74,7 +75,7 @@ pub async fn reconsile(md: Arc<ModelDeployment>, ctx: Arc<Ctx>) -> Result<Action
                 EventType::Normal,
             )
             .await?;
-            with_event(
+            let out = with_event(
                 &ctx,
                 &*md,
                 "Finalizer complete; allowing deletion.",
@@ -83,10 +84,11 @@ pub async fn reconsile(md: Arc<ModelDeployment>, ctx: Arc<Ctx>) -> Result<Action
                 remove_finalizer(&ctx.client, &md, &ns, FINALIZER),
             )
             .await?;
+            changed |= out != Outcome::NoOp;
         }
     }
 
-    with_event(
+    let out = with_event(
         &ctx,
         &*md,
         "Created finalizer for ModelDeployment",
@@ -95,9 +97,10 @@ pub async fn reconsile(md: Arc<ModelDeployment>, ctx: Arc<Ctx>) -> Result<Action
         ensure_finalizer_present(&ctx.client, &md, &ns, FINALIZER),
     )
     .await?;
+    changed |= out != Outcome::NoOp;
 
     let svc_api: Api<Service> = Api::namespaced(ctx.client.clone(), &ns);
-    with_event(
+    let out = with_event(
         &ctx,
         &*md,
         "Created live svc for ModelDeployment",
@@ -106,9 +109,10 @@ pub async fn reconsile(md: Arc<ModelDeployment>, ctx: Arc<Ctx>) -> Result<Action
         ensure_service(&svc_api, &md, &base_name, DeploymentType::Live),
     )
     .await?;
+    changed |= out != Outcome::NoOp;
 
     if spec.shadow.is_some() {
-        with_event(
+        let out = with_event(
             &ctx,
             &*md,
             "Created shadow svc for ModelDeployment",
@@ -117,10 +121,11 @@ pub async fn reconsile(md: Arc<ModelDeployment>, ctx: Arc<Ctx>) -> Result<Action
             ensure_service(&svc_api, &md, &base_name, DeploymentType::Shadow),
         )
         .await?;
+        changed |= out != Outcome::NoOp;
     }
 
     let deployment_api: Api<Deployment> = Api::namespaced(ctx.client.clone(), &ns);
-    with_event(
+    let out = with_event(
         &ctx,
         &*md,
         "Created live Deployment",
@@ -137,9 +142,10 @@ pub async fn reconsile(md: Arc<ModelDeployment>, ctx: Arc<Ctx>) -> Result<Action
         ),
     )
     .await?;
+    changed |= out != Outcome::NoOp;
 
     if let Some(shadow) = &spec.shadow {
-        with_event(
+        let out = with_event(
             &ctx,
             &*md,
             "Created shadow Deployment",
@@ -156,11 +162,12 @@ pub async fn reconsile(md: Arc<ModelDeployment>, ctx: Arc<Ctx>) -> Result<Action
             ),
         )
         .await?;
+        changed |= out != Outcome::NoOp;
     }
 
     if spec.traffic_mirror {
         let ts_api = traefik_service_api(ctx.client.clone(), &ns);
-        with_event(
+        let out = with_event(
             &ctx,
             &*md,
             "Created Traefik Service",
@@ -169,9 +176,10 @@ pub async fn reconsile(md: Arc<ModelDeployment>, ctx: Arc<Ctx>) -> Result<Action
             ensure_traefik_service(&ts_api, &md, &base_name),
         )
         .await?;
+        changed |= out != Outcome::NoOp;
 
         let ir_api = ingress_route_api(ctx.client.clone(), &ns);
-        with_event(
+        let out = with_event(
             &ctx,
             &*md,
             "Created Ingress Route",
@@ -180,20 +188,24 @@ pub async fn reconsile(md: Arc<ModelDeployment>, ctx: Arc<Ctx>) -> Result<Action
             ensure_ingress_route(&ir_api, &md, &base_name),
         )
         .await?;
+        changed |= out != Outcome::NoOp;
     }
 
     let (live_status, shadow_status) = get_child_status(&ctx.client, &base_name, &ns).await?;
     let model_deployment_status =
         compute_model_deployment_status(spec, &live_status, &shadow_status).await;
     update_status(&ctx.client, &md, &ns, &model_deployment_status).await?;
-    emit_event(
-        &ctx,
-        &*md,
-        "Reconciled",
-        "Reconciliation completed",
-        EventType::Normal,
-    )
-    .await?;
+
+    if changed {
+        emit_event(
+            &ctx,
+            &*md,
+            "Reconciled",
+            "Reconciliation completed",
+            EventType::Normal,
+        )
+        .await?;
+    }
 
     Ok(Action::requeue(Duration::from_secs(60)))
 }
@@ -207,11 +219,11 @@ async fn ensure_service(
     md: &ModelDeployment,
     base_name: &str,
     role: DeploymentType,
-) -> Result<(), Error> {
+) -> Result<Outcome, Error> {
     let svc_name = format!("{}-{}-svc", base_name, role);
 
     if api.get_opt(&svc_name).await?.is_some() {
-        return Ok(());
+        return Ok(Outcome::NoOp);
     }
 
     let mut labels = BTreeMap::new();
@@ -239,7 +251,7 @@ async fn ensure_service(
 
     api.create(&PostParams::default(), &svc).await?;
     println!("Created service {}", svc_name);
-    Ok(())
+    Ok(Outcome::Created)
 }
 
 async fn ensure_deployment(
@@ -250,9 +262,9 @@ async fn ensure_deployment(
     image: &str,
     replicas: i32,
     role: DeploymentType,
-) -> Result<(), Error> {
+) -> Result<Outcome, Error> {
     if api.get_opt(deployment_name).await?.is_some() {
-        return Ok(());
+        return Ok(Outcome::NoOp);
     }
 
     let mut labels = BTreeMap::new();
@@ -303,18 +315,18 @@ async fn ensure_deployment(
 
     api.create(&PostParams::default(), &deploy).await?;
     println!("created Deployment: {}", deployment_name);
-    Ok(())
+    Ok(Outcome::Created)
 }
 
 async fn ensure_traefik_service(
     api: &Api<DynamicObject>,
     md: &ModelDeployment,
     base_name: &str,
-) -> Result<(), Error> {
+) -> Result<Outcome, Error> {
     let ts_name = base_name.to_string();
 
     if api.get_opt(&ts_name).await?.is_some() {
-        return Ok(());
+        return Ok(Outcome::NoOp);
     }
 
     let live_svc_name = format!("{}-live-svc", base_name);
@@ -356,18 +368,18 @@ async fn ensure_traefik_service(
 
     api.create(&PostParams::default(), &obj).await?;
     println!("created TraefikService {}", ts_name);
-    Ok(())
+    Ok(Outcome::Created)
 }
 
 async fn ensure_ingress_route(
     api: &Api<DynamicObject>,
     md: &ModelDeployment,
     base_name: &str,
-) -> Result<(), Error> {
+) -> Result<Outcome, Error> {
     let ir_name = base_name.to_string();
 
     if api.get_opt(&ir_name).await?.is_some() {
-        return Ok(());
+        return Ok(Outcome::NoOp);
     }
 
     let md_owner = owner_ref(md);
@@ -406,7 +418,7 @@ async fn ensure_ingress_route(
 
     api.create(&PostParams::default(), &obj).await?;
     println!("created IngressRoute {}", ir_name);
-    Ok(())
+    Ok(Outcome::Created)
 }
 
 fn traefik_service_api(client: Client, ns: &str) -> Api<DynamicObject> {

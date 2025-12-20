@@ -1,5 +1,5 @@
-use crate::crd::ModelDeployment;
 use crate::error::Error;
+use crate::{crd::ModelDeployment, event::Outcome};
 use kube::{
     Api, Client, Resource, ResourceExt,
     api::{Patch, PatchParams},
@@ -25,9 +25,9 @@ pub async fn ensure_finalizer_present(
     md: &ModelDeployment,
     ns: &str,
     finalizer: &str,
-) -> Result<(), Error> {
+) -> Result<Outcome, Error> {
     if has_finalizer(md, finalizer) {
-        return Ok(());
+        return Ok(Outcome::NoOp);
     }
 
     let api: Api<ModelDeployment> = Api::namespaced(client.clone(), ns);
@@ -42,7 +42,7 @@ pub async fn ensure_finalizer_present(
 
     api.patch_metadata(&name, &PatchParams::default(), &Patch::Merge(&patch))
         .await?;
-    Ok(())
+    Ok(Outcome::Created)
 }
 
 pub async fn remove_finalizer(
@@ -50,7 +50,7 @@ pub async fn remove_finalizer(
     md: &ModelDeployment,
     ns: &str,
     finalizer: &str,
-) -> Result<(), Error> {
+) -> Result<Outcome, Error> {
     let api: Api<ModelDeployment> = Api::namespaced(client.clone(), ns);
     let name = md.name_any();
 
@@ -63,5 +63,5 @@ pub async fn remove_finalizer(
 
     api.patch_metadata(&name, &PatchParams::default(), &Patch::Merge(&patch))
         .await?;
-    Ok(())
+    Ok(Outcome::Updated)
 }
