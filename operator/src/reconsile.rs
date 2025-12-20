@@ -74,13 +74,13 @@ pub async fn reconsile(md: Arc<ModelDeployment>, ctx: Arc<Ctx>) -> Result<Action
                 EventType::Normal,
             )
             .await?;
-            remove_finalizer(&ctx.client, &md, &ns, FINALIZER).await?;
-            emit_event(
+            with_event(
                 &ctx,
                 &*md,
-                "Finalized",
                 "Finalizer complete; allowing deletion.",
-                EventType::Normal,
+                "Finalized",
+                "FinalizingFailed",
+                remove_finalizer(&ctx.client, &md, &ns, FINALIZER),
             )
             .await?;
         }
@@ -89,8 +89,9 @@ pub async fn reconsile(md: Arc<ModelDeployment>, ctx: Arc<Ctx>) -> Result<Action
     with_event(
         &ctx,
         &*md,
-        "Created live Service",
-        "LiveSvcFailed",
+        "Created finalizer for ModelDeployment",
+        "FinalizerCreated",
+        "FinalizerFailed",
         ensure_finalizer_present(&ctx.client, &md, &ns, FINALIZER),
     )
     .await?;
@@ -99,7 +100,8 @@ pub async fn reconsile(md: Arc<ModelDeployment>, ctx: Arc<Ctx>) -> Result<Action
     with_event(
         &ctx,
         &*md,
-        "Created live Service",
+        "Created live svc for ModelDeployment",
+        "LiveSvcCreated",
         "LiveSvcFailed",
         ensure_service(&svc_api, &md, &base_name, DeploymentType::Live),
     )
@@ -109,7 +111,8 @@ pub async fn reconsile(md: Arc<ModelDeployment>, ctx: Arc<Ctx>) -> Result<Action
         with_event(
             &ctx,
             &*md,
-            "Created shadow Service",
+            "Created shadow svc for ModelDeployment",
+            "ShadowSvcCreated",
             "ShadowSvcFailed",
             ensure_service(&svc_api, &md, &base_name, DeploymentType::Shadow),
         )
@@ -121,6 +124,7 @@ pub async fn reconsile(md: Arc<ModelDeployment>, ctx: Arc<Ctx>) -> Result<Action
         &ctx,
         &*md,
         "Created live Deployment",
+        "LiveDeploymentCreated",
         "LiveDeploymentFailed",
         ensure_deployment(
             &deployment_api,
@@ -139,6 +143,7 @@ pub async fn reconsile(md: Arc<ModelDeployment>, ctx: Arc<Ctx>) -> Result<Action
             &ctx,
             &*md,
             "Created shadow Deployment",
+            "ShadowDeploymentCreated",
             "ShadowDeploymentFailed",
             ensure_deployment(
                 &deployment_api,
@@ -159,6 +164,7 @@ pub async fn reconsile(md: Arc<ModelDeployment>, ctx: Arc<Ctx>) -> Result<Action
             &ctx,
             &*md,
             "Created Traefik Service",
+            "TraefikServiceCreated",
             "TraefikServiceFailed",
             ensure_traefik_service(&ts_api, &md, &base_name),
         )
@@ -169,6 +175,7 @@ pub async fn reconsile(md: Arc<ModelDeployment>, ctx: Arc<Ctx>) -> Result<Action
             &ctx,
             &*md,
             "Created Ingress Route",
+            "IngressRouteCreated",
             "IngressRouteFailed",
             ensure_ingress_route(&ir_api, &md, &base_name),
         )

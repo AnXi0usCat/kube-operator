@@ -47,6 +47,7 @@ pub async fn with_event<T, E, K>(
     ctx: &Ctx,
     obj: &K,
     success_msg: &str,
+    success_reason: &str,
     fail_reason: &str,
     op: impl std::future::Future<Output = Result<T, E>>,
 ) -> Result<T, E>
@@ -56,7 +57,7 @@ where
 {
     match op.await {
         Ok(val) => {
-            let _ = emit_event(ctx, obj, "Created", success_msg, EventType::Normal).await;
+            let _ = emit_event(ctx, obj, success_reason, success_msg, EventType::Normal).await;
             Ok(val)
         }
         Err(e) => {
