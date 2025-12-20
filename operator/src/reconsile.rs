@@ -4,6 +4,9 @@ use crate::{
     crd::{ChildStatus, Condition, ModelDeployment, ModelDeploymentSpec, ModelDeploymentStatus},
     error::Error,
     event::{Ctx, emit_event, with_event},
+    finalizer::{
+        FINALIZER, ensure_finalizer_present, has_finalizer, is_deleting, remove_finalizer,
+    },
 };
 use k8s_openapi::{
     api::{
@@ -60,6 +63,37 @@ pub async fn reconsile(md: Arc<ModelDeployment>, ctx: Arc<Ctx>) -> Result<Action
     let spec = md.spec();
 
     println!("Reconciling ModelDeployment {}/{}", ns, base_name);
+
+    if is_deleting(&md) {
+        if has_finalizer(&md, FINALIZER) {
+            emit_event(
+                &ctx,
+                &*md,
+                "Finalizing",
+                "Deletion requested; running finalizer.",
+                EventType::Normal,
+            )
+            .await?;
+            remove_finalizer(&ctx.client, &md, &ns, FINALIZER).await?;
+            emit_event(
+                &ctx,
+                &*md,
+                "Finalized",
+                "Finalizer complete; allowing deletion.",
+                EventType::Normal,
+            )
+            .await?;
+        }
+    }
+
+    with_event(
+        &ctx,
+        &*md,
+        "Created live Service",
+        "LiveSvcFailed",
+        ensure_finalizer_present(&ctx.client, &md, &ns, FINALIZER),
+    )
+    .await?;
 
     let svc_api: Api<Service> = Api::namespaced(ctx.client.clone(), &ns);
     with_event(
