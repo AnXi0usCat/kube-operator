@@ -75,7 +75,7 @@ pub async fn reconsile(md: Arc<ModelDeployment>, ctx: Arc<Ctx>) -> Result<Action
                 EventType::Normal,
             )
             .await?;
-            let out = with_event(
+            let _ = with_event(
                 &ctx,
                 &*md,
                 "Finalizer complete; allowing deletion.",
@@ -84,8 +84,8 @@ pub async fn reconsile(md: Arc<ModelDeployment>, ctx: Arc<Ctx>) -> Result<Action
                 remove_finalizer(&ctx.client, &md, &ns, FINALIZER),
             )
             .await?;
-            changed |= out != Outcome::NoOp;
         }
+        return Ok(Action::await_change());
     }
 
     let out = with_event(
