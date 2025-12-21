@@ -20,14 +20,16 @@ use k8s_openapi::{
         util::intstr::IntOrString,
     },
 };
-use kube::Resource;
 use kube::{
     Api, Client,
-    api::{ApiResource, DynamicObject, ObjectMeta, Patch, PatchParams, PostParams, ResourceExt},
+    api::{ApiResource, DynamicObject, ObjectMeta, Patch, PatchParams},
     core::object::HasSpec,
 };
+use kube::{Resource, ResourceExt};
 use kube_runtime::{controller::Action, events::EventType};
+use serde::{Serialize, de::DeserializeOwned};
 use serde_json::json;
+use sha2::{Digest, Sha256};
 
 #[derive(Debug, PartialEq)]
 enum DeploymentType {
@@ -173,7 +175,7 @@ pub async fn reconsile(md: Arc<ModelDeployment>, ctx: Arc<Ctx>) -> Result<Action
             "Created Traefik Service",
             "TraefikServiceCreated",
             "TraefikServiceFailed",
-            ensure_traefik_service(&ts_api, &md, &base_name),
+            ensure_traefik_service(&ts_api, &md, &base_name, &ns),
         )
         .await?;
         changed |= out != Outcome::NoOp;
@@ -185,7 +187,7 @@ pub async fn reconsile(md: Arc<ModelDeployment>, ctx: Arc<Ctx>) -> Result<Action
             "Created Ingress Route",
             "IngressRouteCreated",
             "IngressRouteFailed",
-            ensure_ingress_route(&ir_api, &md, &base_name),
+            ensure_ingress_route(&ir_api, &md, &base_name, &ns),
         )
         .await?;
         changed |= out != Outcome::NoOp;
@@ -222,10 +224,6 @@ async fn ensure_service(
 ) -> Result<Outcome, Error> {
     let svc_name = format!("{}-{}-svc", base_name, role);
 
-    if api.get_opt(&svc_name).await?.is_some() {
-        return Ok(Outcome::NoOp);
-    }
-
     let mut labels = BTreeMap::new();
     labels.insert("app".into(), base_name.to_string());
     labels.insert("role".into(), role.to_string());
@@ -249,9 +247,10 @@ async fn ensure_service(
         ..Default::default()
     };
 
-    api.create(&PostParams::default(), &svc).await?;
-    println!("Created service {}", svc_name);
-    Ok(Outcome::Created)
+    let result = reconsile_resource(api, &svc).await?;
+    println!("Created Service {:?}", svc_name);
+
+    Ok(result)
 }
 
 async fn ensure_deployment(
@@ -263,10 +262,6 @@ async fn ensure_deployment(
     replicas: i32,
     role: DeploymentType,
 ) -> Result<Outcome, Error> {
-    if api.get_opt(deployment_name).await?.is_some() {
-        return Ok(Outcome::NoOp);
-    }
-
     let mut labels = BTreeMap::new();
     labels.insert("app".into(), base_name.to_string());
     labels.insert("role".into(), role.to_string());
@@ -312,22 +307,19 @@ async fn ensure_deployment(
         }),
         ..Default::default()
     };
+    let result = reconsile_resource(api, &deploy).await?;
+    println!("Created Deployment: {}", deployment_name);
 
-    api.create(&PostParams::default(), &deploy).await?;
-    println!("created Deployment: {}", deployment_name);
-    Ok(Outcome::Created)
+    Ok(result)
 }
 
 async fn ensure_traefik_service(
     api: &Api<DynamicObject>,
     md: &ModelDeployment,
     base_name: &str,
+    ns: &str
 ) -> Result<Outcome, Error> {
     let ts_name = base_name.to_string();
-
-    if api.get_opt(&ts_name).await?.is_some() {
-        return Ok(Outcome::NoOp);
-    }
 
     let live_svc_name = format!("{}-live-svc", base_name);
     let shadow_svc_name = format!("{}-shadow-svc", base_name);
@@ -358,34 +350,35 @@ async fn ensure_traefik_service(
         }
     });
 
-    // DynamicObject::new sets kind/apiVersion from ApiResource, but we already
-    // included those in `data` for clarity. kube will merge them.
     let obj = DynamicObject {
-        types: None,
-        metadata: ObjectMeta::default(), // will be filled from `data`
-        data,
+        types: Some(kube::core::TypeMeta {
+            api_version: "traefik.containo.us/v1alpha1".into(),
+            kind: "TraefikService".into(),
+        }),
+        metadata: ObjectMeta {
+            name: Some(ts_name.clone()),
+            namespace: Some(ns.into()),
+            owner_references: Some(vec![owner_ref(md)]),
+            ..Default::default()
+        },
+        data
     };
 
-    api.create(&PostParams::default(), &obj).await?;
+    let result = reconsile_resource(api, &obj).await?;
     println!("created TraefikService {}", ts_name);
-    Ok(Outcome::Created)
+
+    Ok(result)
 }
 
 async fn ensure_ingress_route(
     api: &Api<DynamicObject>,
     md: &ModelDeployment,
     base_name: &str,
+    ns: &str
 ) -> Result<Outcome, Error> {
     let ir_name = base_name.to_string();
-
-    if api.get_opt(&ir_name).await?.is_some() {
-        return Ok(Outcome::NoOp);
-    }
-
     let md_owner = owner_ref(md);
-
     let host_rule = format!("Host(`{}.{}`)", base_name, "local");
-
     let data = json!({
         "apiVersion": "traefik.containo.us/v1alpha1",
         "kind": "IngressRoute",
@@ -411,14 +404,23 @@ async fn ensure_ingress_route(
     });
 
     let obj = DynamicObject {
-        types: None,
-        metadata: ObjectMeta::default(),
-        data,
+        types: Some(kube::core::TypeMeta {
+            api_version: "traefik.containo.us/v1alpha1".into(),
+            kind: "IngressRoute".into(),
+        }),
+        metadata: ObjectMeta {
+            name: Some(ir_name.clone()),
+            namespace: Some(ns.into()), 
+            owner_references: Some(vec![owner_ref(md)]),
+            ..Default::default()
+        },
+        data
     };
 
-    api.create(&PostParams::default(), &obj).await?;
+    let result = reconsile_resource(api, &obj).await?;
     println!("created IngressRoute {}", ir_name);
-    Ok(Outcome::Created)
+
+    Ok(result)
 }
 
 fn traefik_service_api(client: Client, ns: &str) -> Api<DynamicObject> {
@@ -572,4 +574,51 @@ async fn compute_model_deployment_status(
         shadow_status: shadow.clone(),
         conditions: Some(conditions),
     }
+}
+
+async fn reconsile_resource<K>(api: &Api<K>, desired: &K) -> Result<Outcome, Error>
+where
+    K: Resource + std::fmt::Debug + Clone + serde::Serialize + DeserializeOwned,
+{
+    const FP_ANN: &str = "ml.jedimindtricks.example/desired-fingerprint";
+
+    pub fn desired_fingerprint<T: Serialize>(t: &T) -> String {
+        let json = serde_json::to_string(t).unwrap_or_default();
+
+        let mut hasher = Sha256::new();
+        hasher.update(json.as_bytes());
+
+        let hash = hasher.finalize();
+        format!("{:?}", hash)
+    }
+
+    let name = desired.name_any();
+    let existing = api.get_opt(&name).await?;
+    let fp = desired_fingerprint(&desired);
+
+    if let Some(ref resource) = existing {
+        if let Some(ref anno) = resource.meta().annotations {
+            if let Some(old) = anno.get(FP_ANN) {
+                if old == &fp {
+                    return Ok(Outcome::NoOp);
+                }
+            }
+        }
+    }
+
+    let mut desired = desired.clone();
+    desired
+        .meta_mut()
+        .annotations
+        .get_or_insert_with(|| Default::default())
+        .insert(FP_ANN.into(), fp);
+
+    let pp = PatchParams::apply("model-operator");
+    api.patch(&name, &pp, &Patch::Apply(&desired)).await?;
+
+    Ok(if existing.is_none() {
+        Outcome::Created
+    } else {
+        Outcome::Updated
+    })
 }

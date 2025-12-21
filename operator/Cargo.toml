@@ -9,6 +9,8 @@ tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
 futures = "0.3"
 thiserror = "2.0.17"
+sha2 = "0.10"
+hex = "0.4"
 
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -20,5 +22,4 @@ kube-derive = "2.0.1" # Support for Custom Resource Definitions
 kube-runtime = "2.0.1" # Custom controller support
 k8s-openapi = { version = "0.26.0", features = ["v1_31"] } # Kube-rs depends on k8s-openapi
 
-# For metrics later (observability chapter)
 prometheus = "0.13"
