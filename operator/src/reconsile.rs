@@ -20,7 +20,16 @@ use k8s_openapi::{
         util::intstr::IntOrString,
     },
 };
-use kcr_traefik_io::v1alpha1::{ingressroutes::{IngressRoute, IngressRouteRoutes, IngressRouteRoutesKind, IngressRouteRoutesServices, IngressRouteRoutesServicesKind, IngressRouteSpec}, traefikservices::{TraefikService, TraefikServiceMirroring, TraefikServiceMirroringKind, TraefikServiceMirroringMirrors, TraefikServiceMirroringMirrorsKind, TraefikServiceSpec}};
+use kcr_traefik_io::v1alpha1::{
+    ingressroutes::{
+        IngressRoute, IngressRouteRoutes, IngressRouteRoutesKind, IngressRouteRoutesServices,
+        IngressRouteRoutesServicesKind, IngressRouteSpec,
+    },
+    traefikservices::{
+        TraefikService, TraefikServiceMirroring, TraefikServiceMirroringKind,
+        TraefikServiceMirroringMirrors, TraefikServiceMirroringMirrorsKind, TraefikServiceSpec,
+    },
+};
 use kube::{
     Api, Client,
     api::{ObjectMeta, Patch, PatchParams},
@@ -318,7 +327,7 @@ async fn ensure_traefik_service(
     api: &Api<TraefikService>,
     md: &ModelDeployment,
     base_name: &str,
-    ns: &str
+    ns: &str,
 ) -> Result<Outcome, Error> {
     let ts_name = base_name.to_string();
 
@@ -337,15 +346,13 @@ async fn ensure_traefik_service(
                 name: live_svc_name,
                 kind: Some(TraefikServiceMirroringKind::Service),
                 port: Some(IntOrString::Int(8000)),
-                mirrors: Some(vec![
-                    TraefikServiceMirroringMirrors {
-                        name: shadow_svc_name,
-                        kind: Some(TraefikServiceMirroringMirrorsKind::Service),
-                        port: Some(IntOrString::Int(8000)),
-                        percent: Some(100),
-                        ..Default::default()
-                    }
-                ]),
+                mirrors: Some(vec![TraefikServiceMirroringMirrors {
+                    name: shadow_svc_name,
+                    kind: Some(TraefikServiceMirroringMirrorsKind::Service),
+                    port: Some(IntOrString::Int(8000)),
+                    percent: Some(100),
+                    ..Default::default()
+                }]),
                 ..Default::default()
             }),
             ..Default::default()
@@ -362,7 +369,7 @@ async fn ensure_ingress_route(
     api: &Api<IngressRoute>,
     md: &ModelDeployment,
     base_name: &str,
-    ns: &str
+    ns: &str,
 ) -> Result<Outcome, Error> {
     let ir_name = base_name.to_string();
     let host_rule = format!("Host(`{}.{}`)", base_name, "local");
