@@ -21,7 +21,7 @@ rules:
   - apiGroups: ["events.k8s.io"]
     resources: ["events"]
     verbs: ["create", "patch"]
-  - apiGroups: ["traefik.containo.us"]
+  - apiGroups: ["traefik.io"]
     resources: ["traefikservices", "ingressroutes"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   - apiGroups: ["ml.jedimindtricks.example"]
