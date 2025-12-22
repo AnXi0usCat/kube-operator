@@ -29,8 +29,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .run(reconsile, error_policy, ctx)
         .for_each(|res| async move {
             match res {
-                Ok(obj) => println!("Reconciled {:?}", obj),
-                Err(e) => println!("Reconsile error {:?}", e),
+                Ok((ref object, _action)) => {
+                    tracing::info!(
+                        name = %object.name,
+                        namespace = %object.namespace.as_deref().unwrap_or("default"),
+                        "Reconciliation successful"
+                    );
+                }
+                Err(e) => tracing::error!("Reconciliation failed: {:?}", e),
             }
         })
         .await;

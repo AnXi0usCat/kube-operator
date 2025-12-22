@@ -74,7 +74,7 @@ pub async fn reconsile(md: Arc<ModelDeployment>, ctx: Arc<Ctx>) -> Result<Action
     let base_name = md.name_any();
     let spec = md.spec();
 
-    println!("Reconciling ModelDeployment {}/{}", ns, base_name);
+    tracing::info!("Reconciling ModelDeployment {}/{}", ns, base_name);
     let mut changed = false;
 
     if is_deleting(&md) {
@@ -219,6 +219,8 @@ pub async fn reconsile(md: Arc<ModelDeployment>, ctx: Arc<Ctx>) -> Result<Action
         .await?;
     }
 
+    tracing::info!("Reconsiliation completed.");
+
     Ok(Action::requeue(Duration::from_secs(60)))
 }
 
@@ -258,7 +260,7 @@ async fn ensure_service(
     };
 
     let result = reconsile_resource(api, &svc).await?;
-    println!("Created Service {:?}", svc_name);
+    tracing::info!("Created Service {:?}", svc_name);
 
     Ok(result)
 }
@@ -318,7 +320,9 @@ async fn ensure_deployment(
         ..Default::default()
     };
     let result = reconsile_resource(api, &deploy).await?;
-    println!("Created Deployment: {}", deployment_name);
+    if result != Outcome::NoOp {
+        tracing::info!("Created Deployment: {}", deployment_name);
+    }
 
     Ok(result)
 }
@@ -360,8 +364,9 @@ async fn ensure_traefik_service(
     };
 
     let result = reconsile_resource(api, &obj).await?;
-    println!("created TraefikService {}", ts_name);
-
+    if result != Outcome::NoOp {
+    tracing::info!("created TraefikService {}", ts_name);
+    }
     Ok(result)
 }
 
@@ -399,8 +404,9 @@ async fn ensure_ingress_route(
     };
 
     let result = reconsile_resource(api, &obj).await?;
-    println!("created IngressRoute {}", ir_name);
-
+    if result != Outcome::NoOp {
+    tracing::info!("created IngressRoute {}", ir_name);
+    }
     Ok(result)
 }
 
