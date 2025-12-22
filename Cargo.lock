@@ -735,6 +735,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "kcr_traefik_io"
+version = "2.20251105.44842"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d482f8263a70a109cc2a42fbd396e2577fe474faeaa01988da5253f5a9b5dc22"
+dependencies = [
+ "k8s-openapi",
+ "kube",
+ "schemars",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "kube"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -939,6 +952,7 @@ dependencies = [
  "futures",
  "hex",
  "k8s-openapi",
+ "kcr_traefik_io",
  "kube",
  "kube-derive",
  "kube-runtime",

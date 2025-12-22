@@ -21,5 +21,6 @@ kube = { version = "2.0.1", features = ["runtime", "derive"] } # Library for tal
 kube-derive = "2.0.1" # Support for Custom Resource Definitions
 kube-runtime = "2.0.1" # Custom controller support
 k8s-openapi = { version = "0.26.0", features = ["v1_31"] } # Kube-rs depends on k8s-openapi
+kcr_traefik_io = "2.x"
 
 prometheus = "0.13"
