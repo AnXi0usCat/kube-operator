@@ -45,3 +45,14 @@ cluster-info:
     kubectl cluster-info
     kubectl get sc
     kubectl get ns
+
+# ---- helm chart ----
+helm-template:
+    helm template model-operator ./charts/model-operator --namespace model-serving
+
+helm-install:
+    helm upgrade --install model-operator ./charts/model-operator \
+      --namespace model-serving --create-namespace
+
+helm-uninstall:
+    helm uninstall model-operator --namespace model-serving || true
