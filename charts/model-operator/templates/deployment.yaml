@@ -1,0 +1,29 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "model-operator.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: {{ include "model-operator.fullname" . }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app: {{ include "model-operator.fullname" . }}
+  template:
+    metadata:
+      labels:
+        app: {{ include "model-operator.fullname" . }}
+    spec:
+      serviceAccountName: {{ include "model-operator.serviceAccountName" . }}
+      containers:
+        - name: operator
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+            - name: RUST_LOG
+              value: {{ .Values.env.RUST_LOG | quote }}
+{{- with .Values.resources }}
+          resources:
+{{ toYaml . | indent 12 }}
+{{- end }}

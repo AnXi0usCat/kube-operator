@@ -1,0 +1,18 @@
+replicaCount: 1
+
+image:
+  repository: k3d-registry.localhost:5000/model-operator
+  tag: latest
+  pullPolicy: Always
+
+serviceAccount:
+  create: true
+  name: ""
+
+rbac:
+  create: true
+
+env:
+  RUST_LOG: info
+
+resources: {}
