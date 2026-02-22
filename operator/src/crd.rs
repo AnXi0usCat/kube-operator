@@ -114,3 +114,64 @@ fn default_liveness() -> String {
 fn default_readiness() -> String {
     "/ready".into()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn model_deployment_spec_applies_defaults() {
+        let spec: ModelDeploymentSpec = serde_json::from_value(json!({
+            "live": { "image": "ghcr.io/acme/live:1.0.0" }
+        }))
+        .expect("spec should deserialize");
+
+        assert_eq!(spec.live.image, "ghcr.io/acme/live:1.0.0");
+        assert_eq!(spec.live.replicas, 1);
+        assert!(spec.shadow.is_none());
+        assert!(!spec.traffic_mirror);
+        assert_eq!(spec.rollout_strategy, "rolling");
+        assert!(spec.resources.is_none());
+        assert!(spec.autoscaling.is_none());
+        assert!(spec.probes.is_none());
+        assert_eq!(spec.config_ref, None);
+    }
+
+    #[test]
+    fn probe_spec_has_default_paths() {
+        let probes: ProbeSpec =
+            serde_json::from_value(json!({})).expect("probes should deserialize");
+
+        assert_eq!(probes.liveness_path, "/health");
+        assert_eq!(probes.readiness_path, "/ready");
+    }
+
+    #[test]
+    fn model_deployment_status_uses_camel_case_fields() {
+        let status = ModelDeploymentStatus {
+            phase: Some("Available".into()),
+            live_status: Some(ChildStatus {
+                available_replicas: Some(3),
+                updated_replicas: Some(3),
+            }),
+            shadow_status: Some(ChildStatus {
+                available_replicas: Some(1),
+                updated_replicas: Some(1),
+            }),
+            conditions: Some(vec![Condition {
+                r#type: "Ready".into(),
+                status: "True".into(),
+                reason: Some("AllReplicasAvailable".into()),
+                message: Some("all good".into()),
+            }]),
+        };
+
+        let value = serde_json::to_value(status).expect("status should serialize");
+
+        assert!(value.get("liveStatus").is_some());
+        assert!(value.get("shadowStatus").is_some());
+        assert!(value.get("live_status").is_none());
+        assert!(value.get("shadow_status").is_none());
+    }
+}

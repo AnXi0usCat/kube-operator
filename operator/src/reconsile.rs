@@ -589,3 +589,101 @@ where
         Outcome::Updated
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::crd::ModelVariant;
+
+    fn base_spec(live_replicas: i32, shadow_replicas: Option<i32>) -> ModelDeploymentSpec {
+        ModelDeploymentSpec {
+            live: ModelVariant {
+                image: "ghcr.io/acme/live:1.0.0".into(),
+                replicas: live_replicas,
+            },
+            shadow: shadow_replicas.map(|replicas| ModelVariant {
+                image: "ghcr.io/acme/shadow:1.0.0".into(),
+                replicas,
+            }),
+            ..Default::default()
+        }
+    }
+
+    fn child_status(available_replicas: i32, updated_replicas: i32) -> Option<ChildStatus> {
+        Some(ChildStatus {
+            available_replicas: Some(available_replicas),
+            updated_replicas: Some(updated_replicas),
+        })
+    }
+
+    fn condition_status(status: &ModelDeploymentStatus, condition_type: &str) -> String {
+        status
+            .conditions
+            .as_ref()
+            .and_then(|items| items.iter().find(|c| c.r#type == condition_type))
+            .map(|c| c.status.clone())
+            .expect("condition should exist")
+    }
+
+    #[tokio::test]
+    async fn compute_status_available_without_shadow() {
+        let spec = base_spec(2, None);
+
+        let status = compute_model_deployment_status(&spec, &child_status(2, 2), &None).await;
+
+        assert_eq!(status.phase.as_deref(), Some("Available"));
+        assert_eq!(condition_status(&status, "Ready"), "True");
+        assert_eq!(condition_status(&status, "Progressing"), "False");
+        assert_eq!(condition_status(&status, "Degraded"), "False");
+    }
+
+    #[tokio::test]
+    async fn compute_status_progressing_when_live_not_fully_ready() {
+        let spec = base_spec(3, None);
+
+        let status = compute_model_deployment_status(&spec, &child_status(1, 2), &None).await;
+
+        assert_eq!(status.phase.as_deref(), Some("Progressing"));
+        assert_eq!(condition_status(&status, "Ready"), "False");
+        assert_eq!(condition_status(&status, "Progressing"), "True");
+        assert_eq!(condition_status(&status, "Degraded"), "False");
+    }
+
+    #[tokio::test]
+    async fn compute_status_degraded_when_live_has_zero_available() {
+        let spec = base_spec(2, None);
+
+        let status = compute_model_deployment_status(&spec, &child_status(0, 0), &None).await;
+
+        assert_eq!(status.phase.as_deref(), Some("Degraded"));
+        assert_eq!(condition_status(&status, "Ready"), "False");
+        assert_eq!(condition_status(&status, "Progressing"), "True");
+        assert_eq!(condition_status(&status, "Degraded"), "True");
+    }
+
+    #[tokio::test]
+    async fn compute_status_available_with_shadow_when_both_ready() {
+        let spec = base_spec(2, Some(1));
+
+        let status =
+            compute_model_deployment_status(&spec, &child_status(2, 2), &child_status(1, 1)).await;
+
+        assert_eq!(status.phase.as_deref(), Some("Available"));
+        assert_eq!(condition_status(&status, "Ready"), "True");
+        assert_eq!(condition_status(&status, "Progressing"), "False");
+        assert_eq!(condition_status(&status, "Degraded"), "False");
+    }
+
+    #[tokio::test]
+    async fn compute_status_progressing_when_shadow_lags() {
+        let spec = base_spec(2, Some(2));
+
+        let status =
+            compute_model_deployment_status(&spec, &child_status(2, 2), &child_status(1, 1)).await;
+
+        assert_eq!(status.phase.as_deref(), Some("Progressing"));
+        assert_eq!(condition_status(&status, "Ready"), "False");
+        assert_eq!(condition_status(&status, "Progressing"), "True");
+        assert_eq!(condition_status(&status, "Degraded"), "False");
+    }
+}
